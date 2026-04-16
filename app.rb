@@ -3,8 +3,6 @@ require "json"
 require "net/http"
 require "uri"
 require "securerandom"
-require "mutex_m"
-require "open3"
 require "timeout"
 
 set :port, 4001
@@ -26,12 +24,10 @@ abort "Set CLAUDE_OAUTH_TOKEN or CLAUDE_CODE_OAUTH_TOKEN" unless initial_token
 # Refresh tokens are single-use — each refresh yields a new pair.
 
 class TokenManager
-  include Mutex_m
-
   REFRESH_MARGIN = 300 # refresh 5 min before expiry
 
   def initialize(access_token, refresh_token, expires_in: nil)
-    super() # init Mutex_m
+    @mutex = Mutex.new
     @access_token = access_token
     @refresh_token = refresh_token
     @initial_token_prefix = access_token[0..15]
@@ -41,18 +37,18 @@ class TokenManager
   end
 
   def access_token
-    synchronize do
+    @mutex.synchronize do
       refresh! if @refresh_token && Time.now >= (@expires_at - REFRESH_MARGIN)
       @access_token
     end
   end
 
   def force_refresh!
-    synchronize { refresh! }
+    @mutex.synchronize { refresh! }
   end
 
   def status
-    synchronize do
+    @mutex.synchronize do
       remaining = @expires_at - Time.now
       {
         token_prefix: @access_token[0..15],
@@ -246,7 +242,7 @@ def log(method, path, model)
   $stderr.puts "[#{Time.now.strftime("%H:%M:%S")}] #{method} #{path} model=#{model}"
 end
 
-$stderr.puts "claude-proxy (CLI subprocess mode) starting on :4001"
+$stderr.puts "sublet (CLI subprocess mode) starting on :4001"
 $stderr.puts "  token: #{$token_manager.access_token[0..15]}..."
 $stderr.puts "  auto-refresh: #{initial_refresh ? "enabled" : "disabled (no refresh token)"}"
 $stderr.puts "  max concurrent: #{MAX_CONCURRENT}"
