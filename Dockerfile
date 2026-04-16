@@ -19,6 +19,7 @@ RUN bundle install --without development test
 
 # Copy proxy app
 COPY app.rb ./
+COPY lib/ ./lib/
 
 # Create empty working directory for CLI subprocesses
 # (no CLAUDE.md, no .mcp.json, no plugins — minimal startup)
