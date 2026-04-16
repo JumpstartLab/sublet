@@ -12,7 +12,7 @@ Point any Anthropic- or OpenAI-compatible client (OpenClaw, LiteLLM, Aider, your
 - [Value: Use the Subscription Tokens You've Got](#value-use-the-subscription-tokens-youve-got)
 - [Theory: Wrap Claude Code to Operate Like the API](#theory-wrap-claude-code-to-operate-like-the-api)
 - [Strategies](#strategies)
-  - [Invoke Claude Code, Once Per API Request](#invoke-claude-code-once-per-api-request)
+  - [Invoke Claude Code Once Per API Request](#invoke-claude-code-once-per-api-request)
   - [Danger Zone: Direct API Access With Your OAuth Token](#danger-zone-direct-api-access-with-your-oauth-token)
 - [Getting Your Tokens](#getting-your-tokens)
 - [Configuration](#configuration)
@@ -33,25 +33,28 @@ curl -fsSL https://raw.githubusercontent.com/JumpstartLab/sublet/master/bin/inst
 
 That script clones the repo, runs `claude setup-token` to mint a long-lived OAuth token, writes `.env`, and starts the container on `:4001`. When it finishes, you'll have a running proxy.
 
-When the installer reports healthy, confirm the proxy can see your token:
+Send it something to chew on — classifying a support message into one of three buckets is a decent stand-in for the "text in, text out" work Sublet is built for:
 
 ```bash
-curl -s http://localhost:4001/health | jq .
+curl -s http://localhost:4001/v1/messages \
+  -H 'content-type: application/json' \
+  -d '{
+    "model": "claude-haiku-4-5-20251001",
+    "max_tokens": 20,
+    "messages": [{
+      "role": "user",
+      "content": "Classify this support message as one of: billing, bug, feature_request. Respond with only the label.\n\nMessage: \"The export button throws a 500 every time I hit it on Safari.\""
+    }]
+  }' | jq -r '.content[0].text'
 ```
 
-You should see something like:
+After three to five seconds (that's the CLI spin-up tax — see [Strategies](#strategies)) you should see:
 
-```json
-{
-  "status": "ok",
-  "mode": "cli-subprocess",
-  "token_prefix": "sk-ant-oat01-...",
-  "has_refresh": false,
-  "auto_refresh": true
-}
+```
+bug
 ```
 
-A `token_prefix` that starts with `sk-ant-oat01-` means your token is loaded and you're ready to send real requests. See [Endpoints](#endpoints) for what to send next.
+That's a live round trip: your request went through the proxy, spawned a `claude --print` subprocess against your subscription, and came back as a normal Messages API response. Point any Anthropic- or OpenAI-compatible client at `http://localhost:4001` and it'll work the same way — see [Endpoints](#endpoints) for the full surface.
 
 ---
 
@@ -88,7 +91,7 @@ For scrapers, background jobs, and overnight experiments where "slow" is fine, S
 
 ## Strategies
 
-### Invoke Claude Code, Once Per API Request
+### Invoke Claude Code Once Per API Request
 
 🐢 *Slow-and-safe.*
 
