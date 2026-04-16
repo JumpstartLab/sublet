@@ -1,0 +1,131 @@
+require_relative "test_helper"
+require_relative "../lib/prompt_extractor"
+
+class PromptExtractorAnthropicTest < Minitest::Test
+  def extract(body)
+    PromptExtractor.from_anthropic(body)
+  end
+
+  def test_returns_nil_when_messages_missing
+    assert_nil extract({})
+    assert_nil extract({"messages" => []})
+    assert_nil extract({"messages" => "not-an-array"})
+  end
+
+  def test_simple_string_content
+    result = extract({"messages" => [{"role" => "user", "content" => "hello"}]})
+    assert_equal "hello", result.prompt
+    assert_nil result.system_prompt
+    assert result.valid?
+  end
+
+  def test_content_array_concatenates_text_blocks_with_newlines
+    result = extract({"messages" => [{
+      "role" => "user",
+      "content" => [
+        {"type" => "text", "text" => "line 1"},
+        {"type" => "text", "text" => "line 2"},
+      ],
+    }]})
+    assert_equal "line 1\nline 2", result.prompt
+  end
+
+  def test_multiple_user_messages_join_with_blank_line
+    result = extract({"messages" => [
+      {"role" => "user", "content" => "first"},
+      {"role" => "assistant", "content" => "ignored"},
+      {"role" => "user", "content" => "second"},
+    ]})
+    assert_equal "first\n\nsecond", result.prompt
+  end
+
+  def test_non_text_blocks_are_filtered
+    result = extract({"messages" => [{
+      "role" => "user",
+      "content" => [
+        {"type" => "text", "text" => "keep me"},
+        {"type" => "image", "source" => {}},
+        {"type" => "text", "text" => "also keep"},
+      ],
+    }]})
+    assert_equal "keep me\nalso keep", result.prompt
+  end
+
+  def test_system_as_string
+    result = extract({"system" => "be terse",
+                      "messages" => [{"role" => "user", "content" => "hi"}]})
+    assert_equal "be terse", result.system_prompt
+  end
+
+  def test_system_as_array_filters_billing_blocks
+    result = extract({
+      "system" => [
+        {"type" => "text", "text" => "real instructions"},
+        {"type" => "text", "text" => "x-anthropic-billing-header: foo"},
+      ],
+      "messages" => [{"role" => "user", "content" => "hi"}],
+    })
+    assert_equal "real instructions", result.system_prompt
+  end
+
+  def test_system_array_with_only_billing_blocks_becomes_nil
+    result = extract({
+      "system" => [{"type" => "text", "text" => "x-anthropic-billing-header: foo"}],
+      "messages" => [{"role" => "user", "content" => "hi"}],
+    })
+    assert_nil result.system_prompt
+  end
+
+  def test_empty_user_content_array_yields_invalid_result
+    result = extract({"messages" => [{"role" => "user", "content" => []}]})
+    refute result.valid?, "empty content array should produce an invalid extraction"
+  end
+
+  def test_only_assistant_messages_yields_invalid_result
+    result = extract({"messages" => [{"role" => "assistant", "content" => "hi"}]})
+    refute result.valid?
+  end
+end
+
+class PromptExtractorOpenAITest < Minitest::Test
+  def extract(body)
+    PromptExtractor.from_openai(body)
+  end
+
+  def test_returns_nil_when_messages_missing
+    assert_nil extract({})
+    assert_nil extract({"messages" => []})
+  end
+
+  def test_basic_system_and_user_split
+    result = extract({"messages" => [
+      {"role" => "system", "content" => "be terse"},
+      {"role" => "user", "content" => "hi"},
+    ]})
+    assert_equal "hi", result.prompt
+    assert_equal "be terse", result.system_prompt
+  end
+
+  def test_multiple_system_messages_concatenate
+    result = extract({"messages" => [
+      {"role" => "system", "content" => "one"},
+      {"role" => "system", "content" => "two"},
+      {"role" => "user", "content" => "hi"},
+    ]})
+    assert_equal "one\n\ntwo", result.system_prompt
+  end
+
+  def test_assistant_messages_ignored
+    result = extract({"messages" => [
+      {"role" => "user", "content" => "first"},
+      {"role" => "assistant", "content" => "ignored"},
+      {"role" => "user", "content" => "second"},
+    ]})
+    assert_equal "first\n\nsecond", result.prompt
+  end
+
+  def test_no_user_content_yields_invalid
+    result = extract({"messages" => [{"role" => "system", "content" => "be terse"}]})
+    refute result.valid?
+  end
+end

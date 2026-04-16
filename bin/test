@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Run the Minitest suite.
+#
+# Usage:
+#   bin/test                   # run everything
+#   bin/test test/foo_test.rb  # run a single file
+#   SKIP_INTEGRATION=1 bin/test  # skip tests that need the real `claude` CLI
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+if [[ $# -eq 0 ]]; then
+  exec bundle exec ruby -Itest -e "Dir.glob('test/**/*_test.rb').sort.each { |f| require File.expand_path(f) }"
+else
+  exec bundle exec ruby -Itest "$@"
+fi
