@@ -1,0 +1,19 @@
+services:
+  sublet:
+    build: .
+    image: sublet:latest
+    container_name: sublet
+    ports:
+      - "4001:4001"
+    env_file:
+      - .env
+    volumes:
+      # Persist refreshed OAuth tokens across container restarts.
+      - ./data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "ruby -r net/http -e 'exit Net::HTTP.get_response(URI(\"http://localhost:4001/health\")).code == \"200\" ? 0 : 1' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

@@ -1,3 +1,7 @@
 .env
 token_state.json
 *.tmp
+/data/
+/.bundle/
+/vendor/bundle/
+/.ruby-lsp/
