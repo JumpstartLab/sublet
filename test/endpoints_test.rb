@@ -135,4 +135,75 @@ class EndpointsTest < Minitest::Test
     assert_equal 0, body.dig("usage", "input_tokens")
     assert_equal "end_turn", body["stop_reason"]
   end
+
+  # --- Direct API mode opt-in ---------------------------------------
+
+  def test_direct_path_404s_when_direct_mode_disabled
+    previous = $direct_dispatcher
+    $direct_dispatcher = nil
+    post "/direct/v1/messages",
+         {model: "haiku", messages: [{role: "user", content: "hi"}]}.to_json,
+         {"CONTENT_TYPE" => "application/json"}
+    assert_equal 404, last_response.status
+    assert_match(/ENABLE_DIRECT_API/, JSON.parse(last_response.body).dig("error", "message"))
+  ensure
+    $direct_dispatcher = previous
+  end
+
+  def test_direct_path_routes_to_direct_dispatcher_when_enabled
+    fake = Minitest::Mock.new
+    fake.expect(:call, CANNED_SUCCESS,
+                ["hi"], model: "haiku", system_prompt: nil, json_output: true)
+    previous = $direct_dispatcher
+    $direct_dispatcher = fake
+
+    # If the route leaked to $dispatcher instead, this stub would raise.
+    $dispatcher.stub(:call, ->(*) { raise "CLI dispatcher must not be called" }) do
+      post "/direct/v1/messages",
+           {model: "haiku", messages: [{role: "user", content: "hi"}]}.to_json,
+           {"CONTENT_TYPE" => "application/json"}
+    end
+
+    assert_equal 200, last_response.status
+    fake.verify
+  ensure
+    $direct_dispatcher = previous
+  end
+
+  def test_direct_api_error_status_is_forwarded
+    previous = $direct_dispatcher
+    $direct_dispatcher = Object.new
+    $direct_dispatcher.define_singleton_method(:call) do |*, **|
+      raise DirectDispatcher::APIError.new("rate limited", 429)
+    end
+
+    post "/direct/v1/messages",
+         {model: "haiku", messages: [{role: "user", content: "hi"}]}.to_json,
+         {"CONTENT_TYPE" => "application/json"}
+
+    assert_equal 429, last_response.status
+    body = JSON.parse(last_response.body)
+    assert_equal "api_error", body.dig("error", "type")
+    assert_match(/429/, body.dig("error", "message"))
+  ensure
+    $direct_dispatcher = previous
+  end
+
+  def test_direct_openai_path_routes_to_direct_dispatcher
+    fake = Minitest::Mock.new
+    fake.expect(:call, CANNED_SUCCESS,
+                ["hi"], model: "haiku", system_prompt: nil, json_output: true)
+    previous = $direct_dispatcher
+    $direct_dispatcher = fake
+
+    post "/direct/v1/chat/completions",
+         {model: "haiku", messages: [{role: "user", content: "hi"}]}.to_json,
+         {"CONTENT_TYPE" => "application/json"}
+
+    assert_equal 200, last_response.status
+    assert_equal "chat.completion", JSON.parse(last_response.body)["object"]
+    fake.verify
+  ensure
+    $direct_dispatcher = previous
+  end
 end

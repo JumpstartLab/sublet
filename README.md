@@ -1,42 +1,71 @@
 # sublet
 
-A small HTTP proxy that exposes the Anthropic Messages API and OpenAI Chat Completions API, and fulfills requests by spawning `claude --print` subprocesses. It lets you point any Anthropic- or OpenAI-compatible client (LiteLLM, Aider, custom scripts, etc.) at a local endpoint backed by your Claude Code login.
+## The pitch
 
-Under the hood it:
+A lot of us are building AI systems right now, and there's a split in how you pay for the tokens.
 
-- Accepts `POST /v1/messages` (Anthropic) and `POST /v1/chat/completions` (OpenAI-compatible)
-- Extracts the system prompt and user messages
-- Runs the Claude Code CLI with your OAuth token and the requested model
-- Converts the CLI's JSON output back into the expected API response shape
-- Refreshes the OAuth access token automatically before expiry
-- Persists refreshed tokens to disk so the pair survives restarts
-- Limits in-flight subprocesses and enforces a per-call timeout
+On one side, subscription plans — Claude Pro, Max, the $100 and $200 tiers — come with a generous pool of included tokens. I routinely have days where I don't come close to using my full quota.
+
+On the other side, the API bills per token. I've burned $25 or $50 in a single day on a small prototype while my subscription plan sat mostly idle.
+
+Harnesses like OpenClaw and OpenCode used to bridge this gap — you could route traffic from a harness through your Claude subscription. In early April 2026, Anthropic shut that off.
+
+If you need fast processing, you still have to pay the API. But there's a whole class of work — scrapers, background processors, overnight jobs, experiments — where "slow" is perfectly fine.
+
+## The theory
+
+What if we could use our Claude subscription as though it were an API?
+
+What's the minimal wrapper that can ingest an API request, run it through an interactive Claude session, generate a response, and send it back out through the API?
+
+That's the question this project is trying to answer.
+
+## Strategies
+
+There are two ways sublet can dispatch a request. Pick one — or run both and route by model.
+
+### 1. Invoke Claude Code, once per API request
+
+This strategy appears to be terms-of-service compliant. It drives the real Claude CLI (which does its own per-request cryptographic signing) through your OAuth login. It's our version of following the rules.
+
+**What you can expect:** each request takes about three to five seconds to come back. If you're scraping data or processing things in the background, that's great. For live chat it's a little slow. If you're firing a large burst of requests in a short window, they'll queue behind the subprocess pool and it's going to take a while. But it works, and it works pretty well.
+
+This is the default. Every route under `/v1/*` uses it. Nothing extra to enable.
+
+### 2. Danger zone — direct API access with your OAuth token
+
+Part of Anthropic's strategy in cutting off third-party harnesses was to introduce per-request signing inside the Claude CLI itself.
+
+It works like this: when the CLI makes an outgoing request, it attaches a short hash called `cch` (Claude Code Hash) to an `x-anthropic-billing-header` block. That value is computed and inserted at send time by native Zig code inside Bun's HTTP stack — it is not produced by the JavaScript part of the CLI, and it is not something a non-CLI client can easily replicate. This mechanism was exposed by the Claude Code source code leak in March 2026:
+
+- [Alex Kim — Claude Code source code leak walkthrough](https://alex000kim.com/posts/2026-03-31-claude-code-source-leak/)
+- [Zscaler — Anthropic Claude Code leak analysis](https://www.zscaler.com/blogs/security-research/anthropic-claude-code-leak)
+- [NodeSource — the Bun bug inside the Claude Code leak](https://nodesource.com/blog/anthropic-claude-code-source-leak-bun-bug)
+- [Engineers Codex — Diving into Claude Code's source](https://read.engineerscodex.com/p/diving-into-claude-codes-source-code)
+- [Cybernews coverage](https://cybernews.com/security/anthropic-claude-code-source-leak/)
+
+As of mid-April 2026, Anthropic is not enforcing this signature. You can leave it blank and use your OAuth token to submit and retrieve requests through the API directly. It's fast and it works great.
+
+**This is probably not a wise idea.**
+
+Anthropic can flip enforcement on at any time. My guess is that the delay is a scalability issue on their end — they're clearly struggling with demand, and running signature verification on every request adds real load. But they didn't introduce the signing mechanism for no reason. Enforcement is coming.
+
+Second, if they're logging requests (or even sampling them), it becomes trivial for historical analysis to identify which accounts are violating the terms of service. Those are the accounts that get warned or banned.
+
+My recommendation: if you want to use this approach, **do it only with an account you're willing to lose.** Given how favorable the pricing is compared to direct API access, it may genuinely be worth setting up a $100 Max plan, running the direct strategy for a while, and streaming thousands of dollars worth of tokens through it. But when it stops working, don't be surprised.
+
+To opt in, set `ENABLE_DIRECT_API=true` and use the `/direct/*` routes. The request and response shapes are identical to the CLI routes — only the path prefix differs — so a LiteLLM config can route some models to CLI and others to direct.
 
 ---
 
-## ⚠️ Read before using
+## Before you run it
 
-**This is an unofficial tool and is not affiliated with or endorsed by Anthropic.** It uses a Claude Code OAuth token to drive the `claude` CLI on your behalf and returns the output over HTTP.
+A few housekeeping notes that don't change depending on which strategy you pick:
 
-- Anthropic's [Consumer Terms](https://www.anthropic.com/legal/consumer-terms), [Commercial Terms](https://www.anthropic.com/legal/commercial-terms), and [Usage Policy](https://www.anthropic.com/legal/aup) govern how you may use Claude and the Claude Code CLI. **Using a Claude Code subscription to serve automated API traffic may not be permitted** under those terms, and Anthropic may change its terms or technical behavior at any time in ways that break or disallow this pattern.
-- **You are solely responsible** for determining whether your intended use is permitted and for the consequences of running this software. If you need programmatic access to Claude, the supported path is an Anthropic API key.
-- **Do not expose this proxy to the public internet.** Anyone who can reach it can spend your subscription. Bind to `127.0.0.1`, put it on a private network (Tailscale, WireGuard, VPN), or front it with auth. The default bind is `0.0.0.0:4001` for container convenience — that is not a safe default for a public host.
-- **Your OAuth token is a credential.** Treat the `.env` file, token state file, and logs with the same care you would an API key.
-
-If any of that is not acceptable to you, do not use this project.
-
----
-
-## Why it exists
-
-The Claude Code CLI is an interactive tool. A handful of use cases — local agent frameworks, routing through LiteLLM, experimenting with the OpenAI chat-completions shape, using clients that expect one of these APIs — need an HTTP endpoint instead of a TTY. This proxy is the smallest wrapper I could write to bridge the two.
-
-It is explicitly **not**:
-
-- A replacement for the Anthropic API (use an API key for that)
-- A streaming implementation (responses are returned whole)
-- A tool-use / function-calling implementation (only text in, text out)
-- A way to hide your subscription from Anthropic
+- This is an unofficial tool and is not affiliated with or endorsed by Anthropic. Anthropic's [Consumer Terms](https://www.anthropic.com/legal/consumer-terms), [Commercial Terms](https://www.anthropic.com/legal/commercial-terms), and [Usage Policy](https://www.anthropic.com/legal/aup) govern how you may use Claude. You are solely responsible for determining whether your use is permitted.
+- Don't expose this proxy to the public internet. Anyone who can reach it can spend your subscription. Bind to `127.0.0.1`, put it on a private network (Tailscale, WireGuard, VPN), or front it with auth. The default bind is `0.0.0.0:4001` for container convenience — not a safe default for a public host.
+- Your OAuth token is a credential. Treat the `.env` file, the token state file, and the logs with the same care you would an API key.
+- Responses are not streamed. Tool use / function calling is not supported. Only text in, text out.
 
 ## Quickstart
 
@@ -91,6 +120,9 @@ All configuration is via environment variables. Only the first is required.
 | `CLAUDE_OAUTH_CLIENT_ID` | public Claude Code client ID | OAuth client ID used when refreshing tokens. |
 | `CLI_WORKDIR` | `/app/workdir` | Working directory for the `claude` subprocess. Kept empty in the image so there is no project `CLAUDE.md`, `.mcp.json`, or plugin config. |
 | `TOKEN_STATE_FILE` | `/data/token_state.json` | Where refreshed tokens are persisted. Mount a volume here so refreshes survive restarts. |
+| `ENABLE_DIRECT_API` | `false` | Opt in to the experimental `/direct/*` routes that call the Anthropic API directly (read the Direct API mode section before enabling). |
+| `DIRECT_API_ENDPOINT` | `https://api.anthropic.com/v1/messages` | Override for pointing direct mode at a mock server. |
+| `DIRECT_API_MAX_TOKENS` | `4096` | Default `max_tokens` for direct-mode requests. |
 
 ## Endpoints
 
@@ -144,6 +176,16 @@ Liveness and token status. Safe to scrape; only returns a 16-character prefix of
 
 Force a token refresh. Returns before/after status. Useful if you want to rotate tokens manually or test that refresh works.
 
+### `POST /direct/v1/messages` and `POST /direct/v1/chat/completions` — direct API mode (opt-in)
+
+Available only when `ENABLE_DIRECT_API=true`. The request and response shapes are identical to the CLI routes above — same headers, same body, same output — so any client configured for `/v1/messages` can point at `/direct/v1/messages` instead and just work. See the [Danger zone](#2-danger-zone--direct-api-access-with-your-oauth-token) section above for the full explanation of what you're signing up for.
+
+When the flag is off (the default), both direct routes return:
+
+```json
+{"error":{"type":"not_found","message":"Direct API mode is disabled. Set ENABLE_DIRECT_API=true to opt in (see README — fragile)."}}
+```
+
 ## Using with LiteLLM
 
 Minimal `config.yaml`:
@@ -163,6 +205,27 @@ model_list:
 ```
 
 LiteLLM requires an API key string; the proxy does not check it (it uses the OAuth token baked into the container).
+
+If you have enabled direct mode and want LiteLLM to route some models through it, register a second entry whose `api_base` points at `/direct`:
+
+```yaml
+model_list:
+  # Safe default: CLI subprocess mode.
+  - model_name: claude-haiku
+    litellm_params:
+      model: anthropic/claude-haiku-4-5-20251001
+      api_base: http://localhost:4001
+      api_key: not-used-but-required
+
+  # Faster but fragile — see README. Only the api_base differs.
+  - model_name: claude-haiku-direct
+    litellm_params:
+      model: anthropic/claude-haiku-4-5-20251001
+      api_base: http://localhost:4001/direct
+      api_key: not-used-but-required
+```
+
+This way LiteLLM dispatches to each strategy as a distinct provider by model name, and the fragile path is explicit in your config.
 
 ## How it works
 
@@ -196,6 +259,7 @@ app.rb                       Sinatra app + endpoints
 lib/prompt_extractor.rb      Anthropic/OpenAI request → (prompt, system) extraction
 lib/token_manager.rb         OAuth access + refresh token lifecycle
 lib/cli_dispatcher.rb        Subprocess spawn, concurrency limiter, timeout
+lib/direct_dispatcher.rb     Opt-in direct API client (experimental)
 test/                        Minitest suite (see Testing)
 Dockerfile                   node:22-slim + Ruby + Claude Code CLI + Bundler
 docker-compose.yml           ./data volume for token state
