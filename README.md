@@ -2,6 +2,8 @@
 
 **What if you could use your Claude subscription just like it was the API?**
 
+Often what we need from the API is simple text in and text out: summarizing, processing, categorizing, etc. Sublet sacrifices speed but can save significant cost in this kind of scenario.
+
 Point any Anthropic- or OpenAI-compatible client (OpenClaw, LiteLLM, Aider, your own scripts) at a local endpoint, and Sublet answers the request by driving the Claude CLI on your behalf using your OAuth login.
 
 ### Contents
@@ -85,8 +87,6 @@ For scrapers, background jobs, and overnight experiments where "slow" is fine, S
 - If the env-var token prefix differs from the on-disk token prefix on startup, the proxy prefers the env var — so rotating credentials by editing `.env` and restarting always wins over the saved state.
 
 ## Strategies
-
-There are two ways Sublet can dispatch a request. Pick one — or run both and route by model.
 
 ### Invoke Claude Code, Once Per API Request
 

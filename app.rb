@@ -89,6 +89,10 @@ post %r{/(?:direct/)?v1/messages} do
   body = JSON.parse(request.body.read)
   model = body["model"] || "haiku"
 
+  if (reason = PromptExtractor.tool_use_in_anthropic(body))
+    halt 400, {error: {type: "invalid_request_error", message: "Tool use is not supported (#{reason}); Sublet is text-in/text-out only — see README"}}.to_json
+  end
+
   extracted = PromptExtractor.from_anthropic(body)
   halt 400, {error: {type: "invalid_request_error", message: "messages required"}}.to_json if extracted.nil?
   halt 400, {error: {type: "invalid_request_error", message: "no user message content"}}.to_json unless extracted.valid?
@@ -136,6 +140,10 @@ post %r{/(?:direct/)?v1/chat/completions} do
   direct = request.path_info.start_with?("/direct/")
   body = JSON.parse(request.body.read)
   model = body["model"] || "haiku"
+
+  if (reason = PromptExtractor.tool_use_in_openai(body))
+    halt 400, {error: {message: "Tool use is not supported (#{reason}); Sublet is text-in/text-out only — see README", type: "invalid_request_error"}}.to_json
+  end
 
   extracted = PromptExtractor.from_openai(body)
   halt 400, {error: {message: "messages required"}}.to_json if extracted.nil?

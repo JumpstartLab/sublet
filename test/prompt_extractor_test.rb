@@ -129,3 +129,87 @@ class PromptExtractorOpenAITest < Minitest::Test
     refute result.valid?
   end
 end
+
+class PromptExtractorToolUseDetectionTest < Minitest::Test
+  # --- Anthropic ----------------------------------------------------
+
+  def test_anthropic_detects_non_empty_tools_array
+    reason = PromptExtractor.tool_use_in_anthropic(
+      "tools" => [{"name" => "get_weather"}],
+      "messages" => [{"role" => "user", "content" => "hi"}],
+    )
+    assert_match(/tools array/, reason)
+  end
+
+  def test_anthropic_ignores_empty_tools_array
+    assert_nil PromptExtractor.tool_use_in_anthropic(
+      "tools" => [],
+      "messages" => [{"role" => "user", "content" => "hi"}],
+    )
+  end
+
+  def test_anthropic_detects_tool_use_content_block
+    reason = PromptExtractor.tool_use_in_anthropic(
+      "messages" => [{
+        "role" => "assistant",
+        "content" => [{"type" => "tool_use", "id" => "t1", "name" => "x", "input" => {}}],
+      }],
+    )
+    assert_match(/tool_use/, reason)
+  end
+
+  def test_anthropic_detects_tool_result_content_block
+    reason = PromptExtractor.tool_use_in_anthropic(
+      "messages" => [{
+        "role" => "user",
+        "content" => [{"type" => "tool_result", "tool_use_id" => "t1", "content" => "42"}],
+      }],
+    )
+    assert_match(/tool_result/, reason)
+  end
+
+  def test_anthropic_passes_clean_text_only_request
+    assert_nil PromptExtractor.tool_use_in_anthropic(
+      "messages" => [
+        {"role" => "user", "content" => "hi"},
+        {"role" => "assistant", "content" => [{"type" => "text", "text" => "hello"}]},
+      ],
+    )
+  end
+
+  # --- OpenAI -------------------------------------------------------
+
+  def test_openai_detects_non_empty_tools_array
+    reason = PromptExtractor.tool_use_in_openai(
+      "tools" => [{"type" => "function", "function" => {"name" => "x"}}],
+      "messages" => [{"role" => "user", "content" => "hi"}],
+    )
+    assert_match(/tools array/, reason)
+  end
+
+  def test_openai_detects_tool_calls_on_assistant_message
+    reason = PromptExtractor.tool_use_in_openai(
+      "messages" => [{
+        "role" => "assistant",
+        "tool_calls" => [{"id" => "c1", "type" => "function", "function" => {"name" => "x"}}],
+      }],
+    )
+    assert_match(/tool_calls/, reason)
+  end
+
+  def test_openai_detects_tool_role_message
+    reason = PromptExtractor.tool_use_in_openai(
+      "messages" => [{"role" => "tool", "tool_call_id" => "c1", "content" => "42"}],
+    )
+    assert_match(/tool-role message/, reason)
+  end
+
+  def test_openai_passes_clean_text_only_request
+    assert_nil PromptExtractor.tool_use_in_openai(
+      "messages" => [
+        {"role" => "system", "content" => "be terse"},
+        {"role" => "user", "content" => "hi"},
+      ],
+    )
+  end
+end

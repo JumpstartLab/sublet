@@ -101,6 +101,64 @@ class EndpointsTest < Minitest::Test
     assert_equal 400, last_response.status
   end
 
+  # --- 400 on tool-use attempts -------------------------------------
+
+  def test_anthropic_rejects_tools_array_with_400
+    post "/v1/messages",
+         {
+           model: "haiku",
+           tools: [{name: "get_weather", input_schema: {type: "object"}}],
+           messages: [{role: "user", content: "hi"}],
+         }.to_json,
+         {"CONTENT_TYPE" => "application/json"}
+
+    assert_equal 400, last_response.status
+    body = JSON.parse(last_response.body)
+    assert_equal "invalid_request_error", body.dig("error", "type")
+    assert_match(/tool use/i, body.dig("error", "message"))
+  end
+
+  def test_anthropic_rejects_tool_result_block_with_400
+    post "/v1/messages",
+         {
+           model: "haiku",
+           messages: [{
+             role: "user",
+             content: [{type: "tool_result", tool_use_id: "t1", content: "42"}],
+           }],
+         }.to_json,
+         {"CONTENT_TYPE" => "application/json"}
+
+    assert_equal 400, last_response.status
+    assert_match(/tool_result/, JSON.parse(last_response.body).dig("error", "message"))
+  end
+
+  def test_openai_rejects_tools_array_with_400
+    post "/v1/chat/completions",
+         {
+           model: "haiku",
+           tools: [{type: "function", function: {name: "get_weather"}}],
+           messages: [{role: "user", content: "hi"}],
+         }.to_json,
+         {"CONTENT_TYPE" => "application/json"}
+
+    assert_equal 400, last_response.status
+    body = JSON.parse(last_response.body)
+    assert_match(/tool use/i, body.dig("error", "message"))
+  end
+
+  def test_openai_rejects_tool_role_message_with_400
+    post "/v1/chat/completions",
+         {
+           model: "haiku",
+           messages: [{role: "tool", tool_call_id: "c1", content: "42"}],
+         }.to_json,
+         {"CONTENT_TYPE" => "application/json"}
+
+    assert_equal 400, last_response.status
+    assert_match(/tool-role/, JSON.parse(last_response.body).dig("error", "message"))
+  end
+
   # --- Health, models, refresh --------------------------------------
 
   def test_health_reports_ok_and_token_status

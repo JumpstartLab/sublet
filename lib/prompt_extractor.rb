@@ -5,6 +5,39 @@ module PromptExtractor
     end
   end
 
+  # Returns a short reason string if the request is attempting tool use,
+  # or nil if the request is pure text-in/text-out. Sublet can't honor
+  # tool use (see README); callers should reject with 400 when present.
+  def self.tool_use_in_anthropic(body)
+    return "tools array present" if non_empty_array?(body["tools"])
+
+    Array(body["messages"]).each do |m|
+      content = m["content"]
+      next unless content.is_a?(Array)
+      content.each do |block|
+        next unless block.is_a?(Hash)
+        type = block["type"]
+        return "#{type} content block in messages" if type == "tool_use" || type == "tool_result"
+      end
+    end
+    nil
+  end
+
+  def self.tool_use_in_openai(body)
+    return "tools array present" if non_empty_array?(body["tools"])
+
+    Array(body["messages"]).each do |m|
+      return "tool_calls in assistant message" if non_empty_array?(m["tool_calls"])
+      return "tool-role message present" if m["role"] == "tool"
+    end
+    nil
+  end
+
+  def self.non_empty_array?(value)
+    value.is_a?(Array) && !value.empty?
+  end
+  private_class_method :non_empty_array?
+
   def self.from_anthropic(body)
     messages = body["messages"]
     return nil unless messages.is_a?(Array) && !messages.empty?
