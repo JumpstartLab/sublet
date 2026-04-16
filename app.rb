@@ -55,7 +55,7 @@ def log(method, path, model)
   $stderr.puts "[#{Time.now.strftime("%H:%M:%S")}] #{method} #{path} model=#{model}"
 end
 
-$stderr.puts "sublet (CLI subprocess mode) starting on :4001"
+$stderr.puts "Sublet (CLI subprocess mode) starting on :4001"
 $stderr.puts "  token: #{$token_manager.access_token[0..15]}..."
 $stderr.puts "  auto-refresh: #{initial_refresh ? "enabled" : "disabled (no refresh token)"}"
 $stderr.puts "  max concurrent: #{MAX_CONCURRENT}"
